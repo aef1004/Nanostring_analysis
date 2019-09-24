@@ -1,0 +1,123 @@
+---
+title: "DigiGait Analysis"
+output: html_document
+---
+
+We are only interested in the Right and left hind legs of each mouse and the speeds/angles we care about are the 25cms_0, 25cms_10UP, 25cms_10DN and 30cms_0. I would focus on the %SwingStride column (E). 
+
+Of note: The timepoints between these two groups are different so I've been calling timepoints 8 and 11 the same between the two groups
+
+Typically my pipeline for analysis:
+
+1) Paired T test of R vs L hind legs for each timepoint within each group
+2) 1 Way ANOVA of Right hinds overtime for each group
+3) T test comparing Right hinds from both groups at each timepoint
+occasionally baseline will be significant here and I'll subtract baseline from each latter timepoint, but we can always cross that bridge later
+4) The graph I typically make shows just the right hinds from both groups overtime on the same graph for each speed.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readxl)
+library(tidyr)
+library(stringr)
+library(broom)
+library(ggplot2)
+```
+
+
+```{r}
+
+# list the files in the TLR4_KO folder
+TLR4_KO_files <- list.files("../Data/Ariel/TLR4 KO", full.names = TRUE)
+
+# initiate empty data frame
+all_gated_df_TLR4 <- data.frame()
+
+for (i in 1:length(TLR4_KO_files)) {
+  all_data_TLR4 <- read_xlsx(TLR4_KO_files[i]) %>%
+    mutate(Timepoint = TLR4_KO_files[i],
+           Group = "TLR4_KO") 
+  all_gated_df_TLR4 <- rbind(all_gated_df_TLR4, all_data_TLR4)
+}
+
+# list the files in the TLR4_KO folder
+WT_files <- list.files("../Data/Ariel/Wild Type", full.names = TRUE)
+
+# initiate empty data frame
+all_gated_df_WT <- data.frame()
+
+for (i in 1:length(WT_files)) {
+  all_data_WT <- read_xlsx(WT_files[i]) %>%
+    mutate(Timepoint = WT_files[i],
+           Group = "WT") 
+  all_gated_df_WT <- rbind(all_gated_df_WT, all_data_WT)
+}
+
+TLR4_WT_all_files <- rbind(all_gated_df_WT, all_gated_df_TLR4)
+
+all_clean <- TLR4_WT_all_files %>%
+  filter(Limb == "Right Hind" | Limb == "Left Hind") %>%
+  select(FileName, Limb, `%SwingStride`,  Timepoint, Group) %>%
+  separate(FileName, into = c("Mouse", "speed", "angle", "hind")) %>%
+  select(speed, angle, Mouse, Limb, `%SwingStride`, Timepoint, Group) %>%
+  filter(Timepoint != "10.21.15 baseline.xlsx") %>%
+  unite(speed_angle, c(speed, angle), sep = "_") %>%
+  filter(speed_angle == "25cms_0degUP" | speed_angle == "25cms_10degUP" | speed_angle == "25cms_10degDN" | speed_angle == "30cms_0degUP") %>%
+  mutate(Timepoint = str_replace(Timepoint, "../Data/Ariel/TLR4 KO/", ""),
+         Timepoint = str_replace(Timepoint, "../Data/Ariel/Wild Type/", "")) %>%
+  mutate(Timepoint = str_replace(Timepoint, ".xlsx", "")) %>%
+  mutate(`%SwingStride` = as.numeric(`%SwingStride`)) %>%
+  mutate(Timepoint = str_replace(Timepoint, "[0-9][0-9]\\.[0-9][0-9]\\.[0-9][0-9]\\s", "")) %>%
+  mutate(Timepoint = str_replace(Timepoint, "day 11", "day 8")) %>%
+  rename(SwingStride = "%SwingStride") %>%
+  mutate(Timepoint = str_replace(Timepoint, "tlr4 day 1 post sx", "day 1")) %>%
+  mutate(Timepoint = str_replace(Timepoint, " redo", "")) %>%
+  mutate(Timepoint = str_replace(Timepoint, "baseline", "day 0")) %>%
+  mutate(Timepoint = str_replace(Timepoint, "day ", "")) %>%
+  mutate(Timepoint = as.numeric(Timepoint))
+
+```
+
+Paired T test of R vs L hind legs for each timepoint within each group
+```{r}
+
+all_clean %>%
+  group_by(Group, Timepoint) %>%
+  do(tidy(t.test(.$`SwingStride`~.$Limb, paired = TRUE))) %>%
+  filter(p.value < 0.05)
+
+```
+
+1 Way ANOVA of Right hinds overtime for each group
+```{r}
+all_clean %>%
+  filter(Limb == "Right Hind") %>%
+  group_by(Group) %>%
+  do(tidy(aov(.$`SwingStride`~.$Timepoint))) 
+```
+
+T test comparing Right hinds from both groups at each timepoint
+occasionally baseline will be significant here and I'll subtract baseline from each latter timepoint, but we can always cross that bridge later.
+
+```{r}
+
+```
+
+
+The graph I typically make shows just the right hinds from both groups overtime on the same graph for each speed.
+
+```{r}
+all_clean_right_hind <- all_clean %>%
+  filter(Limb == "Right Hind")  
+
+
+ggplot(all_clean_right_hind, aes(x = Timepoint, y = SwingStride, color = Group)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~speed_angle) +
+  theme(axis.text = element_text(angle = 45, hjust = 1))
+```
+
