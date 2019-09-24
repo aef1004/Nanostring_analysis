@@ -1,0 +1,200 @@
+---
+title: "Nanostring Analysis"
+author: "Amy Fox"
+output: html_document
+---
+
+This is a pipeline for analyzing nanostring data.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(broom)
+library(readr)
+library(ggpubr)
+```
+
+# Compare LPS v. saline
+First need to run normality test on data, if True, then run F.test, if true, then run t.test.
+
+Read in and clean the data
+```{r}
+
+data <- read_csv("../Data/Ariel/Normalized GAPDH and Cltc_NormalizedData.csv", skip = 1) %>%
+  rename(gene_name= "X2",
+         assension_no = "X3") 
+
+data <- data[14:281, ] %>%
+  gather(group, count, -Description, -gene_name, -assension_no) %>%
+  separate(col = group, into = c("Treatment", "Time", "Sample"), by = " ") %>%
+  na.omit() %>%
+  mutate(count = as.numeric(count))
+
+```
+
+Normality test: these genes are the ones that are normally distributed
+```{r}
+normal_test_data <- data %>%
+  group_by(gene_name) %>% 
+  do(tidy(shapiro.test(.$count)))
+
+
+normally_distributed <- normal_test_data %>%
+  filter(p.value > 0.05)
+
+
+not_normal_distribution <- normal_test_data %>%
+  filter(p.value < 0.05) %>%
+  select(gene_name)
+
+# run Mann-Whitney Wilcox on non-normally distributed
+
+if (nrow(not_normal_distribution) > 0) {
+data_for_Wilcox <- left_join(not_normal_distribution, data) 
+
+significant_Wilcox <- data_for_Wilcox %>%
+  group_by(gene_name) %>% 
+  do(tidy(wilcox.test(.$count~.$Treatment))) %>%
+  filter(p.value < 0.0500)
+
+wilcox_for_plot <- left_join(significant_Wilcox, data)
+
+ggplot(wilcox_for_plot, aes(Treatment, count)) +
+  geom_boxplot(aes(color = gene_name)) +
+  facet_wrap(~gene_name, scales = "free") +
+  stat_compare_means(method = "wilcox.test", exact = TRUE) +
+  ggtitle("Significantly Different Genes (Non-Normal Data)") +
+  ylab("Gene Expression") +
+  theme(legend.position = "none") }
+
+```
+
+F-test: tests if there are differences in the variances
+```{r message = FALSE}
+normally_distributed_remove <- normally_distributed %>%
+  select(gene_name)
+
+data_for_f_test <- left_join(normally_distributed_remove, data)
+
+f_test_pass <- data_for_f_test %>%
+  group_by(gene_name) %>%
+  nest() %>%
+  mutate(f_test_result = map(data, ~var.test(count ~Treatment, data = .x)),
+         tidy_f_test = map(f_test_result, tidy)) %>%
+  unnest(tidy_f_test, .drop = TRUE) %>%
+  filter(p.value > 0.05)
+
+```
+  
+T test: 
+```{r}
+f_test_genes <- f_test_pass %>%
+  select(gene_name)
+
+data_for_t_test <- left_join(f_test_genes, data) 
+
+t_test_data <- data_for_t_test %>%
+  group_by(gene_name) %>% 
+  do(tidy(t.test(.$count~.$Treatment)))
+
+all_passed_data <- t_test_data %>%
+  filter(p.value <0.05)
+
+data_for_plot <- left_join(all_passed_data, data)
+
+ggplot(data_for_plot, aes(Treatment, count)) +
+  geom_boxplot(aes(color = gene_name)) +
+  stat_compare_means(method = "t.test") +
+  facet_wrap(~gene_name, scales = "free") +
+  ggtitle("Significantly Different Genes (Normal Data)") +
+  ylab("Gene Expression") +
+  theme(legend.position = "none")
+```
+
+# Compare Saline between Timepoints
+
+Normality test: these genes are the ones that are normally distributed
+```{r}
+
+saline_timepoint_data <- data %>%
+  filter(Treatment == "Saline")
+
+LPS_timepoint_data <- data %>%
+  filter(Treatment == "LPS")
+
+normal_test_data <- LPS_timepoint_data %>%
+  group_by(gene_name) %>% 
+  do(tidy(shapiro.test(.$count))) 
+
+normally_distributed <- normal_test_data %>%
+  filter(p.value > 0.05)
+
+not_normal_distribution <- normal_test_data %>%
+  filter(p.value < 0.05) %>%
+  select(gene_name)
+
+# run Mann-Whitney Wilcox on non-normally distributed
+if (nrow(not_normal_distribution) > 0) {
+data_for_Wilcox <- left_join(not_normal_distribution, LPS_timepoint_data) 
+
+significant_Wilcox <- data_for_Wilcox %>%
+  group_by(gene_name) %>% 
+  do(tidy(wilcox.test(.$count~.$Time))) %>%
+  filter(p.value < 0.0500)
+
+wilcox_for_plot <- left_join(significant_Wilcox, LPS_timepoint_data)
+
+ggplot(wilcox_for_plot, aes(Time, count)) +
+  geom_boxplot(aes(color = gene_name)) +
+  facet_wrap(~gene_name, scales = "free") +
+  stat_compare_means(method = "wilcox.test", exact = TRUE) +
+  ggtitle("ignificantly Different Genes Between Timepoints (Non-Normal Data)") +
+  ylab("Gene Expression") +
+  theme(legend.position = "none") }
+```
+
+F-test: tests if there are differences in the variances
+```{r message = FALSE}
+normally_distributed_remove <- normally_distributed %>%
+  select(gene_name)
+
+data_for_f_test <- left_join(normally_distributed_remove, LPS_timepoint_data)
+
+f_test_pass <- data_for_f_test %>%
+  group_by(gene_name) %>%
+  nest() %>%
+  mutate(f_test_result = map(data, ~var.test(count ~ Time, data = .x)),
+         tidy_f_test = map(f_test_result, tidy)) %>%
+  unnest(tidy_f_test, .drop = TRUE) %>%
+  filter(p.value > 0.05)
+
+```
+
+T test: 
+```{r}
+f_test_genes <- f_test_pass %>%
+  select(gene_name)
+
+data_for_t_test <- left_join(f_test_genes, LPS_timepoint_data) 
+
+t_test_data <- data_for_t_test %>%
+  group_by(gene_name) %>% 
+  do(tidy(t.test(.$count~.$Time)))
+
+all_passed_data <- t_test_data %>%
+  filter(p.value <0.05)
+
+data_for_plot <- left_join(all_passed_data, LPS_timepoint_data)
+
+ggplot(data_for_plot, aes(Time, count)) +
+  geom_boxplot(aes(color = gene_name)) +
+  stat_compare_means(method = "t.test") +
+  facet_wrap(~gene_name, scales = "free") +
+  ggtitle("Significantly Different Genes Between Timepoints (Normal Data)") +
+  ylab("Gene Expression") +
+  theme(legend.position = "none")
+```
